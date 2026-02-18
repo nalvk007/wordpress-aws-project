@@ -88,7 +88,7 @@ Resources:
     Type: AWS::EC2::Instance
     Properties:
       InstanceType: t2.micro
-      ImageId: ami-xxxxxxxx   # Replace with Amazon Linux 2 AMI
+      ImageId: ami-02777684819ca2214   # Replace with Amazon Linux 2 AMI
       KeyName: !Ref KeyPairName
       SubnetId: !Ref PublicSubnet
       SecurityGroupIds:
