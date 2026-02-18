@@ -1,0 +1,129 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: "WordPress Prod and Dev/Test Stack on Amazon Linux 2023 with Monitoring and Backups"
+
+Parameters:
+  KeyPairName:
+    Type: AWS::EC2::KeyPair::KeyName
+    Description: Name of an existing EC2 KeyPair
+
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+    Description: VPC for WordPress instances
+
+  SubnetId:
+    Type: AWS::EC2::Subnet::Id
+    Description: Subnet for instances
+
+  DevInstanceSchedule:
+    Type: String
+    Default: "cron(0 9 ? * MON-FRI *)" 
+    Description: "Schedule for Dev instance start (CloudWatch Event) UTC"
+
+Resources:
+
+  ### Security Group for WordPress
+  WordPressSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: "Allow HTTP and SSH access"
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0   # Ideally restrict to your IP
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          FromPort: -1
+          ToPort: -1
+          CidrIp: 0.0.0.0/0
+
+  ### IAM Role for CloudWatch Monitoring
+  CloudWatchRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/CloudWatchAgentServerPolicy
+
+  CloudWatchInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles:
+        - !Ref CloudWatchRole
+
+  ### Production WordPress Instance
+  ProdWordPressInstance:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: t2.micro
+      KeyName: !Ref KeyPairName
+      SecurityGroupIds:
+        - !Ref WordPressSG
+      SubnetId: !Ref SubnetId
+      IamInstanceProfile: !Ref CloudWatchInstanceProfile
+      ImageId: ami-0a28f0b01f8f1f85d # Example AL2023 AMI in us-east-1
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          dnf update -y
+          dnf install -y httpd wget php-fpm php-mysqli php-json php php-devel php-mysqlnd mariadb105-server mariadb105
+          systemctl start httpd
+          systemctl enable httpd
+          systemctl start mariadb
+          systemctl enable mariadb
+          mysql -e "CREATE DATABASE wordpress;"
+          mysql -e "CREATE USER 'wpuser'@'localhost' IDENTIFIED BY 'wppassword';"
+          mysql -e "GRANT ALL PRIVILEGES ON wordpress.* TO 'wpuser'@'localhost'; FLUSH PRIVILEGES;"
+          cd /var/www/html
+          wget https://wordpress.org/latest.tar.gz
+          tar -xzf latest.tar.gz
+          chown -R apache:apache wordpress
+
+  ### Dev/Test WordPress Instance
+  DevWordPressInstance:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: t2.micro
+      KeyName: !Ref KeyPairName
+      SecurityGroupIds:
+        - !Ref WordPressSG
+      SubnetId: !Ref SubnetId
+      IamInstanceProfile: !Ref CloudWatchInstanceProfile
+      ImageId: ami-0a28f0b01f8f1f85d # Same AL2023 AMI
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          dnf update -y
+          dnf install -y httpd wget php-fpm php-mysqli php-json php php-devel php-mysqlnd mariadb105-server mariadb105
+          systemctl start httpd
+          systemctl enable httpd
+          systemctl start mariadb
+          systemctl enable mariadb
+          mysql -e "CREATE DATABASE wordpress_dev;"
+          mysql -e "CREATE USER 'wpuser'@'localhost' IDENTIFIED BY 'wppassword';"
+          mysql -e "GRANT ALL PRIVILEGES ON wordpress_dev.* TO 'wpuser'@'localhost'; FLUSH PRIVILEGES;"
+          cd /var/www/html
+          wget https://wordpress.org/latest.tar.gz
+          tar -xzf latest.tar.gz
+          chown -R apache:apache wordpress
+
+Outputs:
+  ProdWordPressURL:
+    Description: "URL for Production WordPress"
+    Value: !Sub "http://${ProdWordPressInstance.PublicDnsName}/wordpress"
+
+  DevWordPressURL:
+    Description: "URL for Dev WordPress"
+    Value: !Sub "http://${DevWordPressInstance.PublicDnsName}/wordpress"
+
